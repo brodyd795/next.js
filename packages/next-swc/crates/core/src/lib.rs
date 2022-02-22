@@ -40,6 +40,7 @@ use swc_common::{self, chain, pass::Optional};
 use swc_common::{SourceFile, SourceMap};
 use swc_ecmascript::ast::EsVersion;
 use swc_ecmascript::transforms::pass::noop;
+use swc_ecmascript::transforms::react::Runtime;
 use swc_ecmascript::{
     parser::{lexer::Lexer, Parser, StringInput},
     visit::Fold,
@@ -48,6 +49,7 @@ use swc_ecmascript::{
 pub mod amp_attributes;
 mod auto_cjs;
 pub mod disallow_re_export_all_in_page;
+pub mod emotion;
 pub mod hook_optimizer;
 pub mod next_dynamic;
 pub mod next_ssg;
@@ -99,6 +101,9 @@ pub struct TransformOptions {
 
     #[serde(default)]
     pub shake_exports: Option<shake_exports::Config>,
+
+    #[serde(default)]
+    pub emotion: Option<emotion::EmotionOptions>,
 }
 
 pub fn custom_before_pass(
@@ -165,6 +170,39 @@ pub fn custom_before_pass(
         },
         match &opts.shake_exports {
             Some(config) => Either::Left(shake_exports::shake_exports(config.clone())),
+            None => Either::Right(noop()),
+        },
+        match &opts.emotion {
+            Some(config) => {
+                let is_react_jsx_runtime = opts
+                    .swc
+                    .config
+                    .jsc
+                    .transform
+                    .as_ref()
+                    .and_then(|t| t.react.runtime)
+                    .map(|r| matches!(r, Runtime::Automatic))
+                    .unwrap_or(false);
+                let es_module_interop = opts
+                    .swc
+                    .config
+                    .module
+                    .as_ref()
+                    .map(|m| {
+                        if let ModuleConfig::CommonJs(c) = m {
+                            !c.no_interop
+                        } else {
+                            true
+                        }
+                    })
+                    .unwrap_or(true);
+                Either::Left(emotion::EmotionTransformer::new(
+                    config.clone(),
+                    file.clone(),
+                    is_react_jsx_runtime,
+                    es_module_interop,
+                ))
+            }
             None => Either::Right(noop()),
         }
     )
